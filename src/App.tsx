@@ -48,8 +48,31 @@ export default function App() {
 
   // --- UI STATE ---
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(() => {
+    const token = localStorage.getItem("adminToken");
+    const lastActive = localStorage.getItem("lastActive");
+    if (token && lastActive) {
+      const inactiveMs = Date.now() - parseInt(lastActive, 10);
+      if (inactiveMs < 5 * 60 * 1000) {
+        return true;
+      }
+    }
+    return false;
+  });
+  const [adminToken, setAdminToken] = useState<string | null>(() => {
+    const token = localStorage.getItem("adminToken");
+    const lastActive = localStorage.getItem("lastActive");
+    if (token && lastActive) {
+      const inactiveMs = Date.now() - parseInt(lastActive, 10);
+      if (inactiveMs < 5 * 60 * 1000) {
+        return token;
+      }
+    }
+    // Clean up if expired
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("lastActive");
+    return null;
+  });
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -234,6 +257,11 @@ export default function App() {
         setIsAdmin(true);
         setShowLoginModal(false);
         setLoginPassword("");
+        
+        // Save to localStorage for page-refresh persistence
+        localStorage.setItem("adminToken", data.token);
+        localStorage.setItem("lastActive", Date.now().toString());
+
         // Show success notification
         showNotification("Login Sukses", "Sesi administrator diaktifkan.");
         
@@ -253,20 +281,63 @@ export default function App() {
     }
   };
 
-  const handleLogout = async () => {
-    if (!adminToken) return;
-    try {
-      await fetch("/api/logout", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${adminToken}` },
-      });
-    } catch (e) {}
+  const handleLogout = useCallback(async () => {
+    const token = adminToken || localStorage.getItem("adminToken");
+    if (token) {
+      try {
+        await fetch("/api/logout", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch (e) {}
+    }
+
+    // Clear localStorage values
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("lastActive");
 
     setIsAdmin(false);
     setAdminToken(null);
     setEditItem(null);
     showNotification("Logout", "Sesi administrator dinonaktifkan.");
-  };
+  }, [adminToken]);
+
+  // --- INACTIVITY TIMEOUT (5 MINUTES) ---
+  useEffect(() => {
+    if (!isAdmin || !adminToken) return;
+
+    // Track user activity to prevent timeout
+    const updateActivity = () => {
+      localStorage.setItem("lastActive", Date.now().toString());
+    };
+
+    window.addEventListener("mousedown", updateActivity);
+    window.addEventListener("keypress", updateActivity);
+    window.addEventListener("scroll", updateActivity);
+    window.addEventListener("touchstart", updateActivity);
+
+    // Periodic check for inactivity (every 5 seconds)
+    const inactivityInterval = setInterval(() => {
+      const lastActive = localStorage.getItem("lastActive");
+      if (lastActive) {
+        const inactiveMs = Date.now() - parseInt(lastActive, 10);
+        if (inactiveMs >= 5 * 60 * 1000) {
+          console.log("[ADMIN] Sesi kedaluwarsa karena tidak ada aktivitas selama 5 menit.");
+          handleLogout();
+        }
+      } else {
+        handleLogout();
+      }
+    }, 5000);
+
+    return () => {
+      window.removeEventListener("mousedown", updateActivity);
+      window.removeEventListener("keypress", updateActivity);
+      window.removeEventListener("scroll", updateActivity);
+      window.removeEventListener("touchstart", updateActivity);
+      clearInterval(inactivityInterval);
+    };
+  }, [isAdmin, adminToken, handleLogout]);
 
   // --- TRIGGER ACTION FUNCTIONS ---
   

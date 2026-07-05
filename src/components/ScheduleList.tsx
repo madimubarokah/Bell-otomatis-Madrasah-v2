@@ -17,7 +17,7 @@ export const ScheduleList: React.FC<ScheduleListProps> = ({
   onDelete,
   onToggleActive,
 }) => {
-  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDay() || 1); // default to today (fallback Monday if Sunday)
+  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDay()); // default to today
   const [searchQuery, setSearchQuery] = useState("");
 
   const daysOfWeek = [
@@ -27,6 +27,7 @@ export const ScheduleList: React.FC<ScheduleListProps> = ({
     { value: 4, label: "Kamis", name: "Khomis" },
     { value: 5, label: "Jumat", name: "Jumu'ah" },
     { value: 6, label: "Sabtu", name: "Sabt" },
+    { value: 0, label: "Minggu", name: "Ahad" },
   ];
 
   const filteredSchedules = schedules

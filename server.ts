@@ -9,7 +9,7 @@ import { ScheduleItem, LogEntry, BellSettings } from "./src/types.js"; // use .j
 dotenv.config();
 
 const app = express();
-const PORT = process.env.APPLET_ID ? 3000 : 2008;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 2008;
 
 // Path to data storage files
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -177,8 +177,8 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
     return res.status(401).json({ error: "Sesi admin kedaluwarsa atau tidak valid." });
   }
 
-  // Extend session duration (sliding window of 30 minutes)
-  activeSessions.set(token, Date.now() + 30 * 60 * 1000);
+  // Extend session duration (sliding window of 5 minutes)
+  activeSessions.set(token, Date.now() + 5 * 60 * 1000);
   next();
 }
 
@@ -217,7 +217,7 @@ app.post("/api/login", (req, res) => {
   const inputHash = hashPassword(password);
   if (inputHash === cachedSettings.adminPasswordHash) {
     const token = crypto.randomBytes(24).toString("hex");
-    const expiry = Date.now() + 60 * 60 * 1000; // 1 hour session
+    const expiry = Date.now() + 5 * 60 * 1000; // 5 minutes session
     activeSessions.set(token, expiry);
 
     addLog("Admin", "Login Berhasil", "Admin berhasil masuk ke dashboard pengaturan.");
@@ -411,9 +411,11 @@ function playServerSideBell(item: ScheduleItem) {
 
   const soundName = item.type === "class" ? "class" : (item.type === "break" ? "break" : "bell");
   
-  // Command sequence: play file (aplay/mpg123) followed by Indonesian voice TTS (espeak)
-  const playCmd = `aplay /app/public/sounds/${soundName}.wav || mpg123 /app/public/sounds/${soundName}.mp3 || aplay /app/public/sounds/bell.wav || mpg123 /app/public/sounds/bell.mp3 || paplay /app/public/sounds/${soundName}.wav || play /app/public/sounds/${soundName}.wav`;
-  const ttsCmd = `espeak -v id+f2 -s 135 "${speechText}"`;
+  // Command sequence: play file via PulseAudio (paplay/pacat) as priority, falling back to aplay/mpg123/play
+  const playCmd = `paplay /app/public/sounds/${soundName}.wav || paplay /app/public/sounds/${soundName}.mp3 || pacat /app/public/sounds/${soundName}.wav || pacat /app/public/sounds/${soundName}.mp3 || paplay /app/public/sounds/bell.wav || paplay /app/public/sounds/bell.mp3 || pacat /app/public/sounds/bell.wav || pacat /app/public/sounds/bell.mp3 || aplay /app/public/sounds/${soundName}.wav || mpg123 /app/public/sounds/${soundName}.mp3 || aplay /app/public/sounds/bell.wav || mpg123 /app/public/sounds/bell.mp3 || play /app/public/sounds/${soundName}.wav`;
+  
+  // TTS command: Pipe espeak output to paplay/pacat, falling back to direct espeak
+  const ttsCmd = `espeak -v id+f2 -s 135 --stdout "${speechText}" | paplay || espeak -v id+f2 -s 135 --stdout "${speechText}" | pacat || espeak -v id+f2 -s 135 "${speechText}"`;
   const combinedCmd = `(${playCmd}) ; (${ttsCmd})`;
 
   console.log(`[BEL MADRASAH] Menjalankan perintah sistem audio: ${combinedCmd}`);
