@@ -3,13 +3,12 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
-import { createServer as createViteServer } from "vite";
 import { ScheduleItem, LogEntry, BellSettings } from "./src/types.js"; // use .js for ESM compatibility or we will resolve in ts-node
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.APPLET_ID ? 3000 : 2008;
 
 // Path to data storage files
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -371,23 +370,16 @@ app.post("/api/settings", requireAdmin, (req, res) => {
 // ---------------- SERVER AND VITE HANDLER ----------------
 
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    // For React SPA routing
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
+  const distPath = path.join(process.cwd(), "dist");
+  app.use(express.static(distPath));
+  
+  // For React SPA routing
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[BEL MADRASAH] Server berjalan di http://localhost:${PORT}`);
+    console.log(`[BEL MADRASAH] Server berjalan di mode produksi pada port 2008`);
   });
 }
 
