@@ -6,7 +6,7 @@ import { AdminScheduleForm } from "./components/AdminScheduleForm";
 import { AdminSettings } from "./components/AdminSettings";
 import { ActivityLogs } from "./components/ActivityLogs";
 import { triggerFullSchoolBell } from "./lib/audioEngine";
-const logoImg = "/src/assets/images/logo_al_ikhlas_1783178791181.jpg";
+const logoImg = "/logo.png";
 import { 
   BellRing, 
   Lock, 

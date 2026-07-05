@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import { exec } from "child_process";
 import { ScheduleItem, LogEntry, BellSettings } from "./src/types.js"; // use .js for ESM compatibility or we will resolve in ts-node
 
 dotenv.config();
@@ -47,6 +48,11 @@ function hashPassword(password: string): string {
 function initDatabase() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+
+  const soundsDir = path.join(process.cwd(), "public", "sounds");
+  if (!fs.existsSync(soundsDir)) {
+    fs.mkdirSync(soundsDir, { recursive: true });
   }
 
   // 1. Settings Init
@@ -367,6 +373,107 @@ app.post("/api/settings", requireAdmin, (req, res) => {
 });
 
 
+// ---------------- BACKEND SCHEDULER FOR SERVER-SIDE AUDIO ----------------
+
+// Helper to get time in specified Indonesian timezone
+function getLocalTimeInTimezone(timezone: "WIB" | "WITA" | "WIT") {
+  const tzOffsets = {
+    "WIB": 7,
+    "WITA": 8,
+    "WIT": 9
+  };
+  const offsetHours = tzOffsets[timezone] || 8; // default WITA
+  
+  const now = new Date();
+  const utcMs = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const tzDate = new Date(utcMs + (3600000 * offsetHours));
+  
+  return {
+    hours: tzDate.getHours(),
+    minutes: tzDate.getMinutes(),
+    day: tzDate.getDay(), // 0 = Sunday, 1 = Monday, etc.
+    formattedTime: `${String(tzDate.getHours()).padStart(2, '0')}:${String(tzDate.getMinutes()).padStart(2, '0')}`
+  };
+}
+
+// Play sound on backend host
+function playServerSideBell(item: ScheduleItem) {
+  let speechText = "";
+  if (item.customText) {
+    speechText = item.customText;
+  } else if (item.type === "class" && item.period) {
+    speechText = `Saatnya masuk jam pelajaran ke ${item.period} dimulai sekarang.`;
+  } else if (item.type === "break") {
+    speechText = `Saatnya istirahat dimulai sekarang. Selamat menikmati waktu istirahat Anda.`;
+  } else {
+    speechText = `Perhatian, saatnya ${item.name}.`;
+  }
+
+  const soundName = item.type === "class" ? "class" : (item.type === "break" ? "break" : "bell");
+  
+  // Command sequence: play file (aplay/mpg123) followed by Indonesian voice TTS (espeak)
+  const playCmd = `aplay /app/public/sounds/${soundName}.wav || mpg123 /app/public/sounds/${soundName}.mp3 || aplay /app/public/sounds/bell.wav || mpg123 /app/public/sounds/bell.mp3 || paplay /app/public/sounds/${soundName}.wav || play /app/public/sounds/${soundName}.wav`;
+  const ttsCmd = `espeak -v id+f2 -s 135 "${speechText}"`;
+  const combinedCmd = `(${playCmd}) ; (${ttsCmd})`;
+
+  console.log(`[BEL MADRASAH] Menjalankan perintah sistem audio: ${combinedCmd}`);
+
+  exec(combinedCmd, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`[BEL MADRASAH] Error saat memutar audio lokal:`, error);
+      addLog("Sistem (Audio)", "Gagal Audio Lokal", `Perintah audio lokal gagal dijalankan: ${error.message}`);
+    } else {
+      console.log(`[BEL MADRASAH] Perintah audio lokal berhasil:`, stdout);
+      if (stderr && stderr.trim()) {
+        console.log(`[BEL MADRASAH] Audio stderr:`, stderr);
+      }
+    }
+  });
+}
+
+let lastTriggeredTime = ""; // Format: "day-HH:MM"
+
+function startScheduler() {
+  console.log("[BEL MADRASAH] Penjadwal latar belakang (scheduler) server-side diaktifkan.");
+  
+  setInterval(() => {
+    try {
+      if (cachedSettings.masterActive === false) {
+        return; // Bell is disabled globally
+      }
+
+      const { day, formattedTime } = getLocalTimeInTimezone(cachedSettings.ntpTimezone);
+      const currentTriggerKey = `${day}-${formattedTime}`;
+
+      if (currentTriggerKey === lastTriggeredTime) {
+        return; // Prevent triggering multiple times in the same minute
+      }
+
+      // Find any active schedules matching the current day and formattedTime
+      const matchingItems = cachedSchedules.filter((item) => {
+        return item.active && item.time === formattedTime && item.days.includes(day);
+      });
+
+      if (matchingItems.length > 0) {
+        lastTriggeredTime = currentTriggerKey; // mark as triggered first to avoid race conditions
+        
+        matchingItems.forEach((item) => {
+          console.log(`[BEL MADRASAH] Jadwal cocok ditemukan: "${item.name}" pukul ${formattedTime}`);
+          addLog(
+            "Sistem (STB)", 
+            "Bel Otomatis", 
+            `Mengeksekusi bel otomatis server-side untuk: "${item.name}"`
+          );
+          playServerSideBell(item);
+        });
+      }
+    } catch (err) {
+      console.error("[BEL MADRASAH] Kesalahan pada scheduler:", err);
+    }
+  }, 15000); // Check every 15 seconds for high precision
+}
+
+
 // ---------------- SERVER AND VITE HANDLER ----------------
 
 async function startServer() {
@@ -377,6 +484,9 @@ async function startServer() {
   app.get("*", (req, res) => {
     res.sendFile(path.join(distPath, "index.html"));
   });
+
+  // Start background scheduler
+  startScheduler();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BEL MADRASAH] Server berjalan di mode produksi pada port 2008`);
